@@ -1,74 +1,90 @@
 package com.filerepository.repositoryservice.service;
 
+import com.filerepository.common.annotation.Audited;
+import com.filerepository.common.annotation.LogExecutionTime;
+import com.filerepository.common.dto.UserDTO;
+import com.filerepository.repositoryservice.client.UserServiceClient;
 import com.filerepository.repositoryservice.dto.CommentRequest;
-import com.filerepository.repositoryservice.dto.CommentResponse;
-import com.filerepository.repositoryservice.entity.Comment;
+import com.filerepository.repositoryservice.exception.ResourceNotFoundException;
+import com.filerepository.repositoryservice.model.Comment;
 import com.filerepository.repositoryservice.repository.CommentRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CommentService {
 
     private final CommentRepository commentRepository;
+    private final UserServiceClient userServiceClient;
 
+    @Audited(action = "CREATE_COMMENT", resource = "COMMENT")
+    @LogExecutionTime
     @Transactional
-    public CommentResponse createComment(CommentRequest request, Long userId, Long repositoryId) {
-        Comment comment = new Comment();
-        comment.setContent(request.getContent());
-        comment.setFileId(request.getFileId());
-        comment.setUserId(userId);
-        comment.setRepositoryId(repositoryId);
-
-        comment = commentRepository.save(comment);
-        return mapToResponse(comment);
+    public Comment createComment(CommentRequest request) {
+        // Get user details
+        UserDTO user = userServiceClient.getUserById(request.getUserId());
+        
+        Comment comment = Comment.builder()
+                .content(request.getContent())
+                .fileId(request.getFileId())
+                .userId(request.getUserId())
+                .username(user.getUsername())
+                .isSupervisorComment(request.isSupervisorComment())
+                .build();
+        
+        return commentRepository.save(comment);
     }
 
-    public List<CommentResponse> getCommentsByFile(Long fileId) {
-        return commentRepository.findByFileId(fileId)
-                .stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    @Audited(action = "GET_COMMENT", resource = "COMMENT")
+    public Comment getCommentById(Long commentId) {
+        return commentRepository.findById(commentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Comment not found with id: " + commentId));
     }
 
-    public List<CommentResponse> getCommentsByRepository(Long repositoryId) {
-        return commentRepository.findByRepositoryId(repositoryId)
-                .stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
-    }
-
+    @Audited(action = "UPDATE_COMMENT", resource = "COMMENT")
     @Transactional
-    public CommentResponse updateComment(Long commentId, String content) {
+    public Comment updateComment(Long commentId, String content) {
         Comment comment = commentRepository.findById(commentId)
-                .orElseThrow(() -> new RuntimeException("Comment not found"));
-
+                .orElseThrow(() -> new ResourceNotFoundException("Comment not found with id: " + commentId));
+        
         comment.setContent(content);
-        comment = commentRepository.save(comment);
-        return mapToResponse(comment);
+        
+        return commentRepository.save(comment);
     }
 
+    @Audited(action = "DELETE_COMMENT", resource = "COMMENT")
     @Transactional
     public void deleteComment(Long commentId) {
-        Comment comment = commentRepository.findById(commentId)
-                .orElseThrow(() -> new RuntimeException("Comment not found"));
-        commentRepository.delete(comment);
+        if (!commentRepository.existsById(commentId)) {
+            throw new ResourceNotFoundException("Comment not found with id: " + commentId);
+        }
+        
+        commentRepository.deleteById(commentId);
     }
 
-    private CommentResponse mapToResponse(Comment comment) {
-        CommentResponse response = new CommentResponse();
-        response.setId(comment.getId());
-        response.setContent(comment.getContent());
-        response.setFileId(comment.getFileId());
-        response.setUserId(comment.getUserId());
-        response.setRepositoryId(comment.getRepositoryId());
-        response.setCreatedAt(comment.getCreatedAt());
-        response.setUpdatedAt(comment.getUpdatedAt());
-        return response;
+    @Audited(action = "GET_FILE_COMMENTS", resource = "COMMENT")
+    public List<Comment> getCommentsByFileId(Long fileId) {
+        return commentRepository.findByFileIdOrderByCreatedAtDesc(fileId);
+    }
+
+    @Audited(action = "GET_USER_COMMENTS", resource = "COMMENT")
+    public List<Comment> getCommentsByUserId(Long userId) {
+        return commentRepository.findByUserId(userId);
+    }
+
+    @Audited(action = "GET_SUPERVISOR_COMMENTS", resource = "COMMENT")
+    public List<Comment> getSupervisorComments(Long fileId) {
+        return commentRepository.findByFileIdAndIsSupervisorComment(fileId, true);
+    }
+
+    @Audited(action = "GET_STUDENT_COMMENTS", resource = "COMMENT")
+    public List<Comment> getStudentComments(Long fileId) {
+        return commentRepository.findByFileIdAndIsSupervisorComment(fileId, false);
     }
 }

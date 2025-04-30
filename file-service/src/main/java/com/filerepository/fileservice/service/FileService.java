@@ -1,139 +1,234 @@
 package com.filerepository.fileservice.service;
 
-import com.filerepository.fileservice.dto.FileResponse;
-import com.filerepository.fileservice.dto.FileUploadRequest;
-import com.filerepository.fileservice.entity.File;
+import com.filerepository.common.annotation.Audited;
+import com.filerepository.common.annotation.LogExecutionTime;
+import com.filerepository.common.dto.UserDTO;
+import com.filerepository.fileservice.client.RepositoryServiceClient;
+import com.filerepository.fileservice.client.UserServiceClient;
+import com.filerepository.fileservice.dto.FileUploadResponse;
+import com.filerepository.fileservice.exception.FileNotFoundException;
+import com.filerepository.fileservice.model.FileEntity;
+import com.filerepository.fileservice.model.FileHistory;
+import com.filerepository.fileservice.repository.FileHistoryRepository;
 import com.filerepository.fileservice.repository.FileRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.List;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class FileService {
 
     private final FileRepository fileRepository;
+    private final FileHistoryRepository fileHistoryRepository;
+    private final FileStorageService fileStorageService;
+    private final UserServiceClient userServiceClient;
+    private final RepositoryServiceClient repositoryServiceClient;
 
-    @Value("${file.upload-dir}")
-    private String uploadDir;
-
+    @Audited(action = "UPLOAD_FILE", resource = "FILE")
+    @LogExecutionTime
     @Transactional
-    public FileResponse uploadFile(FileUploadRequest request, Long userId) throws IOException {
-        MultipartFile multipartFile = request.getFile();
-        String fileName = generateUniqueFileName(multipartFile.getOriginalFilename());
-        Path targetLocation = Paths.get(uploadDir).resolve(fileName);
-
-        // Create directories if they don't exist
-        Files.createDirectories(targetLocation.getParent());
-
-        // Copy file to the target location
-        Files.copy(multipartFile.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
-
-        // Create file entity
-        File file = new File();
-        file.setFileName(multipartFile.getOriginalFilename());
-        file.setFilePath(targetLocation.toString());
-        file.setFileType(multipartFile.getContentType());
-        file.setDescription(request.getDescription());
-        file.setUploadedBy(userId);
-        file.setRepositoryId(request.getRepositoryId());
-        file.setMilestone(request.getMilestone());
-        file.setFolder(request.getFolder());
-        file.setFileSize(multipartFile.getSize());
-
-        file = fileRepository.save(file);
-
-        return mapToFileResponse(file);
+    public FileUploadResponse uploadFile(MultipartFile file, Long repositoryId, Long folderId, Long uploaderId, String description) {
+        // Store the file physically
+        String storedFilename = fileStorageService.storeFile(file);
+        
+        // Get user details from user service
+        UserDTO uploader = userServiceClient.getUserById(uploaderId);
+        
+        // Create the file entity
+        FileEntity fileEntity = FileEntity.builder()
+                .filename(storedFilename)
+                .originalFilename(file.getOriginalFilename())
+                .contentType(file.getContentType())
+                .description(description)
+                .size(file.getSize())
+                .storagePath(storedFilename)
+                .repositoryId(repositoryId)
+                .folderId(folderId)
+                .uploaderId(uploaderId)
+                .uploaderName(uploader.getFullName())
+                .build();
+        
+        // Save to database
+        FileEntity savedFile = fileRepository.save(fileEntity);
+        
+        // Create file history entry
+        FileHistory fileHistory = FileHistory.builder()
+                .fileId(savedFile.getId())
+                .actionType("UPLOAD")
+                .actionDescription("File uploaded")
+                .userId(uploaderId)
+                .username(uploader.getUsername())
+                .build();
+        
+        fileHistoryRepository.save(fileHistory);
+        
+        return FileUploadResponse.builder()
+                .id(savedFile.getId())
+                .filename(savedFile.getFilename())
+                .originalFilename(savedFile.getOriginalFilename())
+                .contentType(savedFile.getContentType())
+                .description(savedFile.getDescription())
+                .size(savedFile.getSize())
+                .repositoryId(savedFile.getRepositoryId())
+                .folderId(savedFile.getFolderId())
+                .uploaderId(savedFile.getUploaderId())
+                .uploaderName(savedFile.getUploaderName())
+                .uploadedAt(savedFile.getUploadedAt())
+                .build();
     }
 
-    public byte[] downloadFile(Long fileId) throws IOException {
-        File file = fileRepository.findById(fileId)
-                .orElseThrow(() -> new RuntimeException("File not found"));
-
-        Path filePath = Paths.get(file.getFilePath());
-        return Files.readAllBytes(filePath);
+    @Audited(action = "DOWNLOAD_FILE", resource = "FILE")
+    @LogExecutionTime
+    public Resource downloadFile(Long fileId, Long userId) {
+        FileEntity fileEntity = fileRepository.findById(fileId)
+                .orElseThrow(() -> new FileNotFoundException("File not found with id " + fileId));
+        
+        // Get user details from user service
+        UserDTO user = userServiceClient.getUserById(userId);
+        
+        // Create file history entry
+        FileHistory fileHistory = FileHistory.builder()
+                .fileId(fileId)
+                .actionType("DOWNLOAD")
+                .actionDescription("File downloaded")
+                .userId(userId)
+                .username(user.getUsername())
+                .build();
+        
+        fileHistoryRepository.save(fileHistory);
+        
+        // Return the file resource
+        return fileStorageService.loadFileAsResource(fileEntity.getStoragePath());
     }
 
-    public FileResponse getFileMetadata(Long fileId) {
-        File file = fileRepository.findById(fileId)
-                .orElseThrow(() -> new RuntimeException("File not found"));
-        return mapToFileResponse(file);
-    }
-
-    public List<FileResponse> getFilesByRepository(Long repositoryId) {
-        return fileRepository.findByRepositoryId(repositoryId)
-                .stream()
-                .map(this::mapToFileResponse)
-                .collect(Collectors.toList());
-    }
-
-    public List<FileResponse> getFilesByMilestone(Long repositoryId, String milestone) {
-        return fileRepository.findByRepositoryIdAndMilestone(repositoryId, milestone)
-                .stream()
-                .map(this::mapToFileResponse)
-                .collect(Collectors.toList());
-    }
-
-    public List<FileResponse> getFilesByFolder(Long repositoryId, String folder) {
-        return fileRepository.findByRepositoryIdAndFolder(repositoryId, folder)
-                .stream()
-                .map(this::mapToFileResponse)
-                .collect(Collectors.toList());
-    }
-
+    @Audited(action = "UPDATE_FILE", resource = "FILE")
+    @LogExecutionTime
     @Transactional
-    public void deleteFile(Long fileId) throws IOException {
-        File file = fileRepository.findById(fileId)
-                .orElseThrow(() -> new RuntimeException("File not found"));
-
-        Path filePath = Paths.get(file.getFilePath());
-        Files.deleteIfExists(filePath);
-
-        fileRepository.delete(file);
-    }
-
-    private String generateUniqueFileName(String originalFileName) {
-        String extension = "";
-        int dotIndex = originalFileName.lastIndexOf('.');
-        if (dotIndex > 0) {
-            extension = originalFileName.substring(dotIndex);
-            originalFileName = originalFileName.substring(0, dotIndex);
+    public FileUploadResponse updateFile(Long fileId, MultipartFile file, String description, Long userId) {
+        FileEntity fileEntity = fileRepository.findById(fileId)
+                .orElseThrow(() -> new FileNotFoundException("File not found with id " + fileId));
+        
+        // If a new file is provided, store it and update the path
+        if (file != null && !file.isEmpty()) {
+            // Delete the old file
+            fileStorageService.deleteFile(fileEntity.getStoragePath());
+            
+            // Store the new file
+            String storedFilename = fileStorageService.storeFile(file);
+            
+            fileEntity.setFilename(storedFilename);
+            fileEntity.setOriginalFilename(file.getOriginalFilename());
+            fileEntity.setContentType(file.getContentType());
+            fileEntity.setSize(file.getSize());
+            fileEntity.setStoragePath(storedFilename);
         }
-        return originalFileName + "_" + UUID.randomUUID().toString() + extension;
+        
+        // Update description if provided
+        if (description != null) {
+            fileEntity.setDescription(description);
+        }
+        
+        // Get user details from user service
+        UserDTO user = userServiceClient.getUserById(userId);
+        
+        // Create file history entry
+        FileHistory fileHistory = FileHistory.builder()
+                .fileId(fileId)
+                .actionType("UPDATE")
+                .actionDescription("File updated")
+                .userId(userId)
+                .username(user.getUsername())
+                .build();
+        
+        fileHistoryRepository.save(fileHistory);
+        
+        // Save updated file
+        FileEntity updatedFile = fileRepository.save(fileEntity);
+        
+        return FileUploadResponse.builder()
+                .id(updatedFile.getId())
+                .filename(updatedFile.getFilename())
+                .originalFilename(updatedFile.getOriginalFilename())
+                .contentType(updatedFile.getContentType())
+                .description(updatedFile.getDescription())
+                .size(updatedFile.getSize())
+                .repositoryId(updatedFile.getRepositoryId())
+                .folderId(updatedFile.getFolderId())
+                .uploaderId(updatedFile.getUploaderId())
+                .uploaderName(updatedFile.getUploaderName())
+                .uploadedAt(updatedFile.getUploadedAt())
+                .build();
     }
 
-    private FileResponse mapToFileResponse(File file) {
-        FileResponse response = new FileResponse();
-        response.setId(file.getId());
-        response.setFileName(file.getFileName());
-        response.setFileType(file.getFileType());
-        response.setDescription(file.getDescription());
-        response.setUploadedBy(file.getUploadedBy());
-        response.setRepositoryId(file.getRepositoryId());
-        response.setMilestone(file.getMilestone());
-        response.setFolder(file.getFolder());
-        response.setFileSize(file.getFileSize());
-        response.setCreatedAt(file.getCreatedAt());
-        response.setUpdatedAt(file.getUpdatedAt());
+    @Audited(action = "DELETE_FILE", resource = "FILE")
+    @LogExecutionTime
+    @Transactional
+    public void deleteFile(Long fileId, Long userId) {
+        FileEntity fileEntity = fileRepository.findById(fileId)
+                .orElseThrow(() -> new FileNotFoundException("File not found with id " + fileId));
+        
+        // Delete the physical file
+        fileStorageService.deleteFile(fileEntity.getStoragePath());
+        
+        // Get user details from user service
+        UserDTO user = userServiceClient.getUserById(userId);
+        
+        // Create file history entry
+        FileHistory fileHistory = FileHistory.builder()
+                .fileId(fileId)
+                .actionType("DELETE")
+                .actionDescription("File deleted")
+                .userId(userId)
+                .username(user.getUsername())
+                .build();
+        
+        fileHistoryRepository.save(fileHistory);
+        
+        // Delete the database record
+        fileRepository.delete(fileEntity);
+    }
 
-        String downloadUrl = ServletUriComponentsBuilder.fromCurrentContextPath()
-                .path("/api/v1/files/download/")
-                .path(file.getId().toString())
-                .toUriString();
-        response.setDownloadUrl(downloadUrl);
+    @Audited(action = "GET_FILE", resource = "FILE")
+    public FileEntity getFileById(Long fileId) {
+        return fileRepository.findById(fileId)
+                .orElseThrow(() -> new FileNotFoundException("File not found with id " + fileId));
+    }
 
-        return response;
+    @Audited(action = "GET_FILES_BY_REPOSITORY", resource = "FILE")
+    public List<FileEntity> getFilesByRepositoryId(Long repositoryId) {
+        return fileRepository.findByRepositoryId(repositoryId);
+    }
+
+    @Audited(action = "GET_FILES_BY_FOLDER", resource = "FILE")
+    public List<FileEntity> getFilesByFolderId(Long folderId) {
+        return fileRepository.findByFolderId(folderId);
+    }
+
+    @Audited(action = "GET_FILES_BY_REPOSITORY_AND_FOLDER", resource = "FILE")
+    public List<FileEntity> getFilesByRepositoryIdAndFolderId(Long repositoryId, Long folderId) {
+        return fileRepository.findByRepositoryIdAndFolderId(repositoryId, folderId);
+    }
+
+    @Audited(action = "GET_FILES_BY_UPLOADER", resource = "FILE")
+    public List<FileEntity> getFilesByUploaderId(Long uploaderId) {
+        return fileRepository.findByUploaderId(uploaderId);
+    }
+
+    @Audited(action = "SEARCH_FILES", resource = "FILE")
+    public List<FileEntity> searchFiles(String keyword) {
+        return fileRepository.findByFilenameContainingIgnoreCase(keyword);
+    }
+
+    @Audited(action = "GET_FILE_HISTORY", resource = "FILE")
+    public List<FileHistory> getFileHistory(Long fileId) {
+        return fileHistoryRepository.findByFileIdOrderByTimestampDesc(fileId);
     }
 }

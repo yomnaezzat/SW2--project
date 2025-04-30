@@ -17,6 +17,7 @@
         <outputRelativeToContentRoot value="true" />
         <module name="api-gateway" />
         <module name="user-service" />
+        <module name="common-library" />
         <module name="eureka-server" />
         <module name="file-service" />
         <module name="repository-service" />
@@ -28,6 +29,7 @@
       <module name="SW2Project" options="-parameters" />
       <module name="SW2Project (1)" options="" />
       <module name="api-gateway" options="-parameters" />
+      <module name="common-library" options="-parameters" />
       <module name="eureka-server" options="-parameters" />
       <module name="file-service" options="-parameters" />
       <module name="repository-service" options="-parameters" />

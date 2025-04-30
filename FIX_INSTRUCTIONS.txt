@@ -1,0 +1,32 @@
+## INSTRUCTIONS TO FIX THE POM FILES
+
+The Maven build is failing because all POM files have an invalid XML tag `<n>` which should be `<n>`.
+
+Follow these steps to fix the POM files:
+
+1. Open each of these files in a text editor:
+   - C:\Users\yumenna ezzat\Downloads\SW2--project\pom.xml
+   - C:\Users\yumenna ezzat\Downloads\SW2--project\common-library\pom.xml
+   - C:\Users\yumenna ezzat\Downloads\SW2--project\api-gateway\pom.xml
+   - C:\Users\yumenna ezzat\Downloads\SW2--project\user-service\pom.xml
+   - C:\Users\yumenna ezzat\Downloads\SW2--project\file-service\pom.xml
+   - C:\Users\yumenna ezzat\Downloads\SW2--project\repository-service\pom.xml
+
+2. In each file, search for `<n>` and replace it with `<n>`
+   For example, change:
+   ```xml
+   <n>common-library</n>
+   ```
+   To:
+   ```xml
+   <n>common-library</n>
+   ```
+
+3. Save all files and run the Maven build again:
+   ```
+   mvn clean install -DskipTests
+   ```
+
+This should fix the "Unrecognised tag" errors you're seeing in the Maven build.
+
+IMPORTANT: Make a backup of the files before modifying them if needed.

@@ -14,7 +14,7 @@
     <groupId>com.filerepository</groupId>
     <artifactId>api-gateway</artifactId>
     <version>1.0-SNAPSHOT</version>
-    <name>api-gateway</name>
+    <n>api-gateway</n>
     <description>API Gateway for File Repository</description>
 
     <properties>
@@ -23,6 +23,13 @@
     </properties>
 
     <dependencies>
+        <!-- Internal Dependencies -->
+        <dependency>
+            <groupId>com.filerepository</groupId>
+            <artifactId>common-library</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+    
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
@@ -35,6 +42,10 @@
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -81,6 +92,14 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
             </plugin>
         </plugins>
     </build>

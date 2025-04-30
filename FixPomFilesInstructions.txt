@@ -1,0 +1,29 @@
+=-=-=-=-= POM XML FIX INSTRUCTIONS =-=-=-=-=
+
+ALL YOUR POM FILES HAVE AN INVALID TAG: <n>
+
+This tag should be <n> (which is the standard Maven tag for project name).
+
+REPLACEMENT FILES WITH FIXED TAGS HAVE BEEN CREATED:
+- NEW_PARENT_POM.xml
+- NEW_COMMON_LIBRARY_POM.xml
+- NEW_API_GATEWAY_POM.xml
+- NEW_USER_SERVICE_POM.xml
+- NEW_FILE_SERVICE_POM.xml 
+- NEW_REPOSITORY_SERVICE_POM.xml
+
+TO FIX THE PROJECT:
+
+1. Rename each NEW_*.xml file to pom.xml in its respective directory:
+
+   - Rename NEW_PARENT_POM.xml to pom.xml in the root project directory
+   - Rename NEW_COMMON_LIBRARY_POM.xml to pom.xml in the common-library directory
+   - Rename NEW_API_GATEWAY_POM.xml to pom.xml in the api-gateway directory
+   - Rename NEW_USER_SERVICE_POM.xml to pom.xml in the user-service directory
+   - Rename NEW_FILE_SERVICE_POM.xml to pom.xml in the file-service directory
+   - Rename NEW_REPOSITORY_SERVICE_POM.xml to pom.xml in the repository-service directory
+
+2. Run the Maven build again:
+   mvn clean install -DskipTests
+
+This should resolve the Maven build errors.

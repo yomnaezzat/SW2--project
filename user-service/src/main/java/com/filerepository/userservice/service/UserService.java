@@ -1,81 +1,129 @@
 package com.filerepository.userservice.service;
 
-import com.filerepository.userservice.config.JwtUtil;
+import com.filerepository.common.annotation.Audited;
+import com.filerepository.common.annotation.LogExecutionTime;
+import com.filerepository.common.dto.UserDTO;
+import com.filerepository.userservice.dto.AuthRequest;
 import com.filerepository.userservice.dto.AuthResponse;
-import com.filerepository.userservice.dto.LoginRequest;
-import com.filerepository.userservice.dto.RegisterRequest;
-import com.filerepository.userservice.entity.User;
+import com.filerepository.userservice.dto.UserRegistrationRequest;
+import com.filerepository.userservice.exception.ResourceNotFoundException;
+import com.filerepository.userservice.exception.UserAlreadyExistsException;
+import com.filerepository.userservice.model.Role;
+import com.filerepository.userservice.model.User;
 import com.filerepository.userservice.repository.UserRepository;
+import com.filerepository.userservice.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
-public class UserService implements UserDetailsService {
+@Slf4j
+public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JwtUtil jwtUtil;
-    private final AuthenticationManager authenticationManager;
+    private final JwtTokenProvider jwtTokenProvider;
 
+    @Audited(action = "USER_REGISTRATION", resource = "USER")
+    @LogExecutionTime
     @Transactional
-    public AuthResponse register(RegisterRequest request) {
-        // Check if username or email already exists
+    public User registerUser(UserRegistrationRequest request) {
         if (userRepository.existsByUsername(request.getUsername())) {
-            throw new RuntimeException("Username already exists");
+            throw new UserAlreadyExistsException("Username already exists: " + request.getUsername());
         }
 
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Email already exists");
+            throw new UserAlreadyExistsException("Email already exists: " + request.getEmail());
         }
 
-        // Create new user
-        User user = new User();
-        user.setUsername(request.getUsername());
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
-        user.setEmail(request.getEmail());
-        user.setRole(request.getRole());
+        Set<Role> roles = new HashSet<>();
+        if (request.getRoles() != null && !request.getRoles().isEmpty()) {
+            roles = request.getRoles().stream()
+                    .map(role -> Role.valueOf(role.toUpperCase()))
+                    .collect(Collectors.toSet());
+        } else {
+            // Default role is STUDENT
+            roles.add(Role.STUDENT);
+        }
 
-        user = userRepository.save(user);
+        User user = User.builder()
+                .username(request.getUsername())
+                .password(passwordEncoder.encode(request.getPassword()))
+                .email(request.getEmail())
+                .fullName(request.getFullName())
+                .roles(roles)
+                .build();
 
-        // Generate JWT token
-        String token = jwtUtil.generateToken(user.getUsername(), user.getRole().name());
-
-        return new AuthResponse(token, user.getUsername(), user.getEmail(), user.getRole());
+        return userRepository.save(user);
     }
 
-    public AuthResponse login(LoginRequest request) {
-        authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword())
-        );
-
+    @Audited(action = "USER_LOGIN", resource = "USER")
+    @LogExecutionTime
+    public AuthResponse authenticateUser(AuthRequest request) {
         User user = userRepository.findByUsername(request.getUsername())
-                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+                .orElseThrow(() -> new BadCredentialsException("Invalid username or password"));
 
-        String token = jwtUtil.generateToken(user.getUsername(), user.getRole().name());
+        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            throw new BadCredentialsException("Invalid username or password");
+        }
 
-        return new AuthResponse(token, user.getUsername(), user.getEmail(), user.getRole());
+        String token = jwtTokenProvider.createToken(user);
+
+        return AuthResponse.builder()
+                .token(token)
+                .userId(user.getId())
+                .username(user.getUsername())
+                .email(user.getEmail())
+                .fullName(user.getFullName())
+                .roles(user.getRoles().stream().map(Role::name).collect(Collectors.toSet()))
+                .build();
     }
 
-    @Override
-    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found with username: " + username));
+    @Audited(action = "GET_USER", resource = "USER")
+    public User getUserById(Long id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
+    }
 
-        return new org.springframework.security.core.userdetails.User(
-                user.getUsername(),
-                user.getPassword(),
-                new ArrayList<>()
-        );
+    @Audited(action = "GET_USER", resource = "USER")
+    public User getUserByUsername(String username) {
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with username: " + username));
+    }
+
+    @Audited(action = "GET_USERS", resource = "USER")
+    public List<UserDTO> getAllUsers() {
+        return userRepository.findAll().stream()
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+    }
+
+    @Audited(action = "GET_SUPERVISORS", resource = "USER")
+    public List<UserDTO> getAllSupervisors() {
+        return userRepository.findAll().stream()
+                .filter(User::isSupervisor)
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+    }
+
+    private UserDTO convertToDTO(User user) {
+        return UserDTO.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .email(user.getEmail())
+                .fullName(user.getFullName())
+                .roles(user.getRoles().stream()
+                        .map(Role::name)
+                        .collect(Collectors.toSet()))
+                .build();
     }
 }

@@ -1,16 +1,21 @@
 package com.filerepository.userservice.dto;
 
-import com.filerepository.userservice.entity.UserRole;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.Set;
+
 @Data
-@AllArgsConstructor
+@Builder
 @NoArgsConstructor
+@AllArgsConstructor
 public class AuthResponse {
     private String token;
+    private Long userId;
     private String username;
     private String email;
-    private UserRole role;
+    private String fullName;
+    private Set<String> roles;
 }
